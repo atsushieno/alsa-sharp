@@ -31,9 +31,9 @@ namespace AlsaSharp
 
 		public void Dispose ()
 		{
-			if (midi_event_parser != IntPtr.Zero) {
-				Natives.snd_midi_event_free (midi_event_parser);
-				midi_event_parser = IntPtr.Zero;
+			if (midi_event_parser_output != IntPtr.Zero) {
+				Natives.snd_midi_event_free (midi_event_parser_output);
+				midi_event_parser_output = IntPtr.Zero;
 			}
 			if (driver_name_handle != IntPtr.Zero) {
 				Marshal.FreeHGlobal (driver_name_handle);
@@ -220,30 +220,32 @@ namespace AlsaSharp
 
 		public const byte QueueDirect = 253;
 
-		public void Output (int port, byte [] data, int index, int count)
+		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
+		public void Send (int port, byte [] data, int index, int count)
 		{
 			unsafe {
 				fixed (byte *ptr = data)
-					Output (port, ptr, index, count);
+					Send (port, ptr, index, count);
 			}
 		}
 
 		const int midi_event_buffer_size = 256;
-		byte [] event_buffer = new byte [midi_event_buffer_size];
-		IntPtr midi_event_parser;
+		byte [] event_buffer_output = new byte [midi_event_buffer_size];
+		IntPtr midi_event_parser_output;
 
 		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
-		public unsafe void Output (int port, byte *data, int index, int count)
+		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
+		public unsafe void Send (int port, byte *data, int index, int count)
 		{
-			if (midi_event_parser == IntPtr.Zero) {
-				var ptr = midi_event_parser;
+			if (midi_event_parser_output == IntPtr.Zero) {
+				var ptr = midi_event_parser_output;
 				var pref = &ptr;
 				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr) pref);
-				midi_event_parser = ptr;
+				midi_event_parser_output = ptr;
 			}
-			fixed (byte* ev = event_buffer) {
+			fixed (byte* ev = event_buffer_output) {
 				for (int i = index; i < index + count; i++) {
-					int ret = Natives.snd_midi_event_encode_byte (midi_event_parser, data [i], (IntPtr) ev);
+					int ret = Natives.snd_midi_event_encode_byte (midi_event_parser_output, data [i], (IntPtr) ev);
 					if (ret < 0)
 						throw new AlsaException (ret);
 					if (ret == 1) {
@@ -257,7 +259,8 @@ namespace AlsaSharp
 			}
 		}
 
-		public void Input (AlsaSequencerEvent result, int port)
+		// receives messages as in ALSA sequencer format. Required for system annoucement messages.
+		public int Input (AlsaSequencerEvent result, int port)
 		{
 			unsafe {
 				IntPtr evt = IntPtr.Zero;
@@ -266,7 +269,51 @@ namespace AlsaSharp
 				if (ret < 0)
 					throw new AlsaException (ret);
 				Marshal.PtrToStructure (evt, result);
+				return ret;
 			}
+		}
+
+		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
+		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
+		public int Receive (int port, byte [] data, int index, int count)
+		{
+			unsafe {
+				fixed (byte* ptr = data)
+					return Receive (port, ptr, index, count);
+			}
+		}
+
+		byte [] event_buffer_input = new byte [midi_event_buffer_size];
+		IntPtr midi_event_parser_input;
+		AlsaSequencerEvent input_seq_event = new AlsaSequencerEvent ();
+
+		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
+		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
+		public unsafe int Receive (int port, byte* data, int index, int count)
+		{
+			int received = 0;
+
+			if (midi_event_parser_input == IntPtr.Zero) {
+				var ptr = midi_event_parser_output;
+				var pref = &ptr;
+				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr)pref);
+				midi_event_parser_input = ptr;
+			}
+
+			fixed (byte* ev = event_buffer_input) {
+				while (index + received < count) {
+					IntPtr sevt = IntPtr.Zero;
+					var seref = &sevt;
+					int ret = Natives.snd_seq_event_input (seq, (IntPtr)seref);
+					if (ret < 0)
+						throw new AlsaException (ret);
+					long converted = Natives.snd_midi_event_decode (midi_event_parser_input, (IntPtr)ev, count - received, sevt);
+					if (converted < 0)
+						throw new AlsaException ((int) converted);
+					received += (int) converted;
+				}
+			}
+			return received;
 		}
 
 		#endregion

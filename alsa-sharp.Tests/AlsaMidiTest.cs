@@ -111,7 +111,7 @@ namespace AlsaSharp.Tests
 		}
 
 		[Test]
-		public void Output ()
+		public void Send ()
 		{
 			using (var seq = new AlsaSequencer (AlsaIOType.Output, AlsaIOMode.NonBlocking)) {
 
@@ -139,10 +139,10 @@ namespace AlsaSharp.Tests
 					var setup = new byte [] { 0xC0, 0x48, 0xB0, 7, 110, 0xB0, 11, 127 };
 					var keyon = new byte [] { 0x90, 0x40, 0x70 };
 					var keyoff = new byte [] { 0x80, 0x40, 0x70 };
-					seq.Output (appPort, setup, 0, setup.Length);
-					seq.Output (appPort, keyon, 0, keyon.Length);
+					seq.Send (appPort, setup, 0, setup.Length);
+					seq.Send (appPort, keyon, 0, keyon.Length);
 					System.Threading.Thread.Sleep (100);
-					seq.Output (appPort, keyoff, 0, keyoff.Length);
+					seq.Send (appPort, keyoff, 0, keyoff.Length);
 					System.Threading.Thread.Sleep (100);
 					seq.DisconnectTo (appPort, lastClient, targetPort);
 				} finally {
@@ -201,6 +201,37 @@ namespace AlsaSharp.Tests
 				Assert.IsTrue (passed, "failed to receive an announcement");
 			} finally {
 				outseq.DeleteSimplePort (testPort);
+			}
+		}
+
+		[Test]
+		public void Receive ()
+		{
+			using (var seq = new AlsaSequencer (AlsaIOType.Input, AlsaIOMode.None)) {
+
+				var cinfo = new AlsaClientInfo { Client = -1 };
+				int lastClient = -1;
+				while (seq.QueryNextClient (cinfo))
+					if (cinfo.Name.Contains ("Keystation"))
+						lastClient = cinfo.Client;
+				if (lastClient < 0) {
+					Console.Error.WriteLine ("Keystation not found. Not testable.");
+					return; // not testable
+				}
+
+				int targetPort = 0;
+
+				int appPort = seq.CreateSimplePort ("alsa-sharp-test-input", AlsaPortCapabilities.Read | AlsaPortCapabilities.NoExport, AlsaPortType.Application | AlsaPortType.MidiGeneric);
+				try {
+					seq.ConnectFrom (appPort, lastClient, targetPort);
+					var data = new byte [3];
+					var received = seq.Receive (appPort, data, 0, 3);
+					Assert.AreEqual (3, received, "received size");
+					Assert.AreEqual (new byte [] { 0x90, 0, 0 }, data, "received data");
+					seq.DisconnectTo (appPort, lastClient, targetPort);
+				} finally {
+					seq.DeleteSimplePort (appPort);
+				}
 			}
 		}
 	}
