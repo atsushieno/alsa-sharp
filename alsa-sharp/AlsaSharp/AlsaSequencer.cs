@@ -283,9 +283,7 @@ namespace AlsaSharp
 			}
 		}
 
-		byte [] event_buffer_input = new byte [midi_event_buffer_size];
 		IntPtr midi_event_parser_input;
-		AlsaSequencerEvent input_seq_event = new AlsaSequencerEvent ();
 
 		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
 		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
@@ -294,24 +292,22 @@ namespace AlsaSharp
 			int received = 0;
 
 			if (midi_event_parser_input == IntPtr.Zero) {
-				var ptr = midi_event_parser_output;
+				var ptr = midi_event_parser_input;
 				var pref = &ptr;
 				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr)pref);
 				midi_event_parser_input = ptr;
 			}
 
-			fixed (byte* ev = event_buffer_input) {
-				while (index + received < count) {
-					IntPtr sevt = IntPtr.Zero;
-					var seref = &sevt;
-					int ret = Natives.snd_seq_event_input (seq, (IntPtr)seref);
-					if (ret < 0)
-						throw new AlsaException (ret);
-					long converted = Natives.snd_midi_event_decode (midi_event_parser_input, (IntPtr)ev, count - received, sevt);
-					if (converted < 0)
-						throw new AlsaException ((int) converted);
-					received += (int) converted;
-				}
+			while (index + received < count) {
+				IntPtr sevt = IntPtr.Zero;
+				var seref = &sevt;
+				int ret = Natives.snd_seq_event_input (seq, (IntPtr)seref);
+				if (ret < 0)
+					throw new AlsaException (ret);
+				long converted = Natives.snd_midi_event_decode (midi_event_parser_input, (IntPtr)data + index + received, count - received, sevt);
+				if (converted < 0)
+					throw new AlsaException ((int) converted);
+				received += (int) converted;
 			}
 			return received;
 		}

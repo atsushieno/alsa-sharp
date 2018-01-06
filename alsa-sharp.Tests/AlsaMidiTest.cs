@@ -218,17 +218,18 @@ namespace AlsaSharp.Tests
 					Console.Error.WriteLine ("Keystation not found. Not testable.");
 					return; // not testable
 				}
+				Console.Error.WriteLine ("Press any key on Keystation to continue...");
 
 				int targetPort = 0;
 
-				int appPort = seq.CreateSimplePort ("alsa-sharp-test-input", AlsaPortCapabilities.Read | AlsaPortCapabilities.NoExport, AlsaPortType.Application | AlsaPortType.MidiGeneric);
+				int appPort = seq.CreateSimplePort ("alsa-sharp-test-input", AlsaPortCapabilities.Write | AlsaPortCapabilities.NoExport, AlsaPortType.Application | AlsaPortType.MidiGeneric);
 				try {
 					seq.ConnectFrom (appPort, lastClient, targetPort);
 					var data = new byte [3];
 					var received = seq.Receive (appPort, data, 0, 3);
 					Assert.AreEqual (3, received, "received size");
-					Assert.AreEqual (new byte [] { 0x90, 0, 0 }, data, "received data");
-					seq.DisconnectTo (appPort, lastClient, targetPort);
+					Assert.AreEqual (0x90, data [0], "received status");
+					seq.DisconnectFrom (appPort, lastClient, targetPort);
 				} finally {
 					seq.DeleteSimplePort (appPort);
 				}
