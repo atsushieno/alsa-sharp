@@ -8,6 +8,7 @@ namespace AlsaSharp
 
 	public class AlsaSequencer : IDisposable {
 		public const int ClientSystem = 0;
+		const int POLLIN = 1;
 
 		public AlsaSequencer (AlsaIOType ioType, AlsaIOMode ioMode, string driverName = "default")
 		{
@@ -224,7 +225,7 @@ namespace AlsaSharp
 		public void Send (int port, byte [] data, int index, int count)
 		{
 			unsafe {
-				fixed (byte *ptr = data)
+				fixed (byte* ptr = data)
 					Send (port, ptr, index, count);
 			}
 		}
@@ -235,17 +236,17 @@ namespace AlsaSharp
 
 		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
 		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
-		public unsafe void Send (int port, byte *data, int index, int count)
+		public unsafe void Send (int port, byte* data, int index, int count)
 		{
 			if (midi_event_parser_output == IntPtr.Zero) {
 				var ptr = midi_event_parser_output;
 				var pref = &ptr;
-				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr) pref);
+				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr)pref);
 				midi_event_parser_output = ptr;
 			}
 			fixed (byte* ev = event_buffer_output) {
 				for (int i = index; i < index + count; i++) {
-					int ret = Natives.snd_midi_event_encode_byte (midi_event_parser_output, data [i], (IntPtr) ev);
+					int ret = Natives.snd_midi_event_encode_byte (midi_event_parser_output, data [i], (IntPtr)ev);
 					if (ret < 0)
 						throw new AlsaException (ret);
 					if (ret == 1) {
@@ -266,9 +267,8 @@ namespace AlsaSharp
 				IntPtr evt = IntPtr.Zero;
 				var eref = &evt;
 				int ret = Natives.snd_seq_event_input (seq, (IntPtr)eref);
-				if (ret < 0)
-					throw new AlsaException (ret);
-				Marshal.PtrToStructure (evt, result);
+				if (ret >= 0)
+					Marshal.PtrToStructure (evt, result);
 				return ret;
 			}
 		}
@@ -285,18 +285,23 @@ namespace AlsaSharp
 
 		IntPtr midi_event_parser_input;
 
-		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
-		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
-		public unsafe int Receive (int port, byte* data, int index, int count)
+		unsafe void PrepareEventParser ()
 		{
-			int received = 0;
-
 			if (midi_event_parser_input == IntPtr.Zero) {
 				var ptr = midi_event_parser_input;
 				var pref = &ptr;
 				Natives.snd_midi_event_new (midi_event_buffer_size, (IntPtr)pref);
 				midi_event_parser_input = ptr;
 			}
+		}
+
+		// FIXME: should this be moved to AlsaMidiApi? It's a bit too high level.
+		// Though ALSA sequencer event is currently not fully represented for details, so it is impossible.
+		public unsafe int Receive (int port, byte* data, int index, int count)
+		{
+			int received = 0;
+
+			PrepareEventParser ();
 
 			while (index + received < count) {
 				IntPtr sevt = IntPtr.Zero;
@@ -306,13 +311,55 @@ namespace AlsaSharp
 					throw new AlsaException (ret);
 				long converted = Natives.snd_midi_event_decode (midi_event_parser_input, (IntPtr)data + index + received, count - received, sevt);
 				if (converted < 0)
-					throw new AlsaException ((int) converted);
-				received += (int) converted;
+					throw new AlsaException ((int)converted);
+				received += (int)converted;
 			}
 			return received;
 		}
 
+		bool event_loop_stopped;
+		byte [] event_loop_buffer;
+		Action<byte [], int, int> on_received;
+		const int default_input_timeout = 500;
+		int input_timeout;
+		Task event_loop_task;
+
+		public void StartListening (int port, byte [] buffer, Action<byte [], int, int> onReceived, int timeout = default_input_timeout)
+		{
+			event_loop_buffer = buffer;
+			on_received = onReceived;
+			input_timeout = timeout;
+			event_loop_task = Task.Run (() => EventLoop (port));
+		}
+
+		public void StopListening ()
+		{
+			event_loop_stopped = true;
+		}
+
+		unsafe void EventLoop (int port)
+		{
+			if (event_loop_buffer == null)
+				throw new InvalidOperationException ("Call SetInputReceived method before running event loop.");
+			
+			int pollfd_size_dummy = 8;
+			int count = Natives.snd_seq_poll_descriptors_count (seq, POLLIN);
+			void* pollfd_array_ref = stackalloc byte [count * pollfd_size_dummy];
+			void* ptr = &pollfd_array_ref;
+			Natives.snd_seq_poll_descriptors (seq, (IntPtr) ptr, (ushort) count, POLLIN);
+			while (!event_loop_stopped) {
+				int rt = poll (ptr, (uint)count, input_timeout);
+				if (rt > 0) {
+					int len = Receive (port, event_loop_buffer, 0, event_loop_buffer.Length);
+					on_received (event_loop_buffer, 0, len);
+				}
+			}
+		}
+
 		#endregion
+
+		[DllImport ("libc.so.6", EntryPoint = "poll", SetLastError = true)]
+		static unsafe extern int poll (void* fds, uint nfds, int timeout);
 	}
 
 

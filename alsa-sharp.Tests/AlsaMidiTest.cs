@@ -235,5 +235,100 @@ namespace AlsaSharp.Tests
 				}
 			}
 		}
+
+		[Test]
+		public void InterruptInput ()
+		{
+			bool passed = false, aborted = false;
+			var evt = new AlsaSequencerEvent ();
+			AlsaSequencer seq = null;
+			int appPort = -1;
+			var waitStart = new ManualResetEvent (false);
+			using (seq = new AlsaSequencer (AlsaIOType.Input, AlsaIOMode.None)) {
+				appPort = seq.CreateSimplePort ("alsa-sharp-test-input", AlsaPortCapabilities.Write | AlsaPortCapabilities.NoExport, AlsaPortType.Application | AlsaPortType.MidiGeneric);
+				var cinfo = new AlsaClientInfo { Client = -1 };
+				int client = -1;
+				while (seq.QueryNextClient (cinfo))
+					if (cinfo.Name.Contains ("Midi Through"))
+						client = cinfo.Client;
+				if (client < 0) {
+					Console.Error.WriteLine ("Midi Through not found. Not testable.");
+					return; // not testable
+				}
+				seq.ConnectFrom (appPort, client, 0);
+				try {
+					seq.ResetPoolInput ();
+					var task = Task.Run (() => {
+						waitStart.Set ();
+						try {
+							seq.Input (evt, appPort);
+							passed = true;
+						} catch (Exception ex) {
+							passed = false;
+							aborted = true;
+							Console.Error.WriteLine ("Input threw an error: " + ex);
+						}
+					});
+					waitStart.WaitOne ();
+					// it will cause ALSA error as it's waiting for input in blocking mode.
+					seq.DisconnectFrom (appPort, client, 0);
+					task.Wait (50);
+					Assert.IsFalse (passed, "input should keep listening");
+					seq.DeleteSimplePort (appPort);
+					task.Wait (50);
+					seq.Dispose ();
+					seq = null;
+					task.Wait (50);
+				} finally {
+					if (seq != null)
+						seq.Dispose ();
+				}
+				// It doesn't even run exception part...
+				Assert.IsFalse (aborted, "We expect it not to abort...");
+			}
+		}
+
+		[Test]
+		public void Listening ()
+		{
+			using (var seq = new AlsaSequencer (AlsaIOType.Input, AlsaIOMode.None)) {
+
+				var cinfo = new AlsaClientInfo { Client = -1 };
+				int lastClient = -1;
+				while (seq.QueryNextClient (cinfo))
+					if (cinfo.Name.Contains ("Keystation"))
+						lastClient = cinfo.Client;
+				if (lastClient < 0) {
+					Console.Error.WriteLine ("Keystation not found. Not testable.");
+					return; // not testable
+				}
+				Console.Error.WriteLine ("Press any key on Keystation to continue...");
+
+				int targetPort = 0;
+
+				int appPort = seq.CreateSimplePort ("alsa-sharp-test-input", AlsaPortCapabilities.Write | AlsaPortCapabilities.NoExport, AlsaPortType.Application | AlsaPortType.MidiGeneric);
+				try {
+					seq.ConnectFrom (appPort, lastClient, targetPort);
+					var data = new byte [3];
+					byte [] cbData = null;
+					var wait = new ManualResetEvent (false);
+					int cbStart = -1, cbLen = -1;
+					seq.StartListening (appPort, data, (_, start, len) => {
+						cbData = _;
+						cbStart = start;
+						cbLen = len;
+						wait.Set ();
+					}, 60000);
+					wait.WaitOne (60000);
+					seq.StopListening ();
+					Assert.IsNotNull (cbData, "received data");
+					Assert.AreEqual (0, cbStart, "received start");
+					Assert.AreEqual (3, cbLen, "received size");
+					seq.DisconnectFrom (appPort, lastClient, targetPort);
+				} finally {
+					seq.DeleteSimplePort (appPort);
+				}
+			}
+		}
 	}
 }
