@@ -291,18 +291,18 @@ namespace AlsaSharp.Tests
 		[Test]
 		public void Listening ()
 		{
-			using (var seq = new AlsaSequencer (AlsaIOType.Input, AlsaIOMode.None)) {
+			using (var seq = new AlsaSequencer (AlsaIOType.Input, AlsaIOMode.NonBlocking)) {
 
 				var cinfo = new AlsaClientInfo { Client = -1 };
 				int lastClient = -1;
 				while (seq.QueryNextClient (cinfo))
-					if (cinfo.Name.Contains ("Keystation"))
+					if (cinfo.Name.Contains ("Keystation") || cinfo.Name.Contains ("Seaboard"))
 						lastClient = cinfo.Client;
 				if (lastClient < 0) {
-					Console.Error.WriteLine ("Keystation not found. Not testable.");
+					Console.Error.WriteLine ("Supported devices not found. Not testable.");
 					return; // not testable
 				}
-				Console.Error.WriteLine ("Press any key on Keystation to continue...");
+				Console.Error.WriteLine ("Press any MIDI key to continue...");
 
 				int targetPort = 0;
 

@@ -303,10 +303,12 @@ namespace AlsaSharp
 
 			PrepareEventParser ();
 
-			while (index + received < count) {
+			bool remaining = true;
+			while (remaining && index + received < count) {
 				IntPtr sevt = IntPtr.Zero;
 				var seref = &sevt;
 				int ret = Natives.snd_seq_event_input (seq, (IntPtr)seref);
+				remaining = Natives.snd_seq_event_input_pending (seq, 0) > 0;
 				if (ret < 0)
 					throw new AlsaException (ret);
 				long converted = Natives.snd_midi_event_decode (midi_event_parser_input, (IntPtr)data + index + received, count - received, sevt);
@@ -320,16 +322,16 @@ namespace AlsaSharp
 		bool event_loop_stopped;
 		byte [] event_loop_buffer;
 		Action<byte [], int, int> on_received;
-		const int default_input_timeout = 500;
+		const int default_input_timeout = -1;
 		int input_timeout;
 		Task event_loop_task;
 
-		public void StartListening (int port, byte [] buffer, Action<byte [], int, int> onReceived, int timeout = default_input_timeout)
+		public void StartListening (int applicationPort, byte [] buffer, Action<byte [], int, int> onReceived, int timeout = default_input_timeout)
 		{
 			event_loop_buffer = buffer;
 			on_received = onReceived;
 			input_timeout = timeout;
-			event_loop_task = Task.Run (() => EventLoop (port));
+			event_loop_task = Task.Run (() => EventLoop (applicationPort));
 		}
 
 		public void StopListening ()
@@ -346,7 +348,9 @@ namespace AlsaSharp
 			int count = Natives.snd_seq_poll_descriptors_count (seq, POLLIN);
 			void* pollfd_array_ref = stackalloc byte [count * pollfd_size_dummy];
 			void* ptr = &pollfd_array_ref;
-			Natives.snd_seq_poll_descriptors (seq, (IntPtr) ptr, (ushort) count, POLLIN);
+			var ret = Natives.snd_seq_poll_descriptors (seq, (IntPtr) ptr, (ushort) count, POLLIN);
+			if (ret < 0)
+				throw new AlsaException (ret);
 			while (!event_loop_stopped) {
 				int rt = poll (ptr, (uint)count, input_timeout);
 				if (rt > 0) {
