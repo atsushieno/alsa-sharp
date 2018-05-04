@@ -7,7 +7,6 @@ using NUnit.Framework;
 
 namespace AlsaSharp.Tests 
 {
-	[TestFixture]
 	public class AlsaMidiTest 
 	{
 		[Test]
