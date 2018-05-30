@@ -6,7 +6,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>AlsaSharp.Tests</RootNamespace>
     <AssemblyName>alsa-sharp.Tests</AssemblyName>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WarningLevel>4</WarningLevel>
     <LangVersion>Latest</LangVersion>
