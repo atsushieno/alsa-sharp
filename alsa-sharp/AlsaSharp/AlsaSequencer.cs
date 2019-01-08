@@ -65,6 +65,13 @@ namespace AlsaSharp
 			Natives.snd_seq_nonblock (seq, toNonBlockingMode ? 1 : 0);
 		}
 
+		public void SetClientEventFilter (AlsaSequencerEventType filter)
+		{
+			int err = Natives.snd_seq_set_client_event_filter (seq, (int) filter);
+			if (err != 0)
+				throw new AlsaException (err);
+		}
+
 		public int CurrentClientId => Natives.snd_seq_client_id (seq);
 
 		public int InputBufferSize {
@@ -261,15 +268,17 @@ namespace AlsaSharp
 		}
 
 		// receives messages as in ALSA sequencer format. Required for system annoucement messages.
-		public int Input (AlsaSequencerEvent result, int port)
+		public unsafe void Input (AlsaSequencerEvent result, int port)
 		{
-			unsafe {
-				IntPtr evt = IntPtr.Zero;
-				var eref = &evt;
-				int ret = Natives.snd_seq_event_input (seq, (IntPtr)eref);
-				if (ret >= 0)
-					Marshal.PtrToStructure (evt, result);
-				return ret;
+			bool remaining = true;
+			while (remaining) {
+				IntPtr sevt = IntPtr.Zero;
+				var seref = &sevt;
+				int ret = Natives.snd_seq_event_input (seq, (IntPtr) seref);
+				Marshal.PtrToStructure (sevt, result);
+				remaining = Natives.snd_seq_event_input_pending (seq, 0) > 0;
+				if (ret < 0)
+					throw new AlsaException (ret);
 			}
 		}
 
@@ -320,18 +329,24 @@ namespace AlsaSharp
 		}
 
 		bool event_loop_stopped;
-		byte [] event_loop_buffer;
-		Action<byte [], int, int> on_received;
 		const int default_input_timeout = -1;
-		int input_timeout;
 		Task event_loop_task;
 
 		public void StartListening (int applicationPort, byte [] buffer, Action<byte [], int, int> onReceived, int timeout = default_input_timeout)
 		{
-			event_loop_buffer = buffer;
-			on_received = onReceived;
-			input_timeout = timeout;
-			event_loop_task = Task.Run (() => EventLoop (applicationPort));
+			event_loop_task = Task.Run (() => EventLoop (applicationPort, timeout, () => {
+				int len = Receive (applicationPort, buffer, 0, buffer.Length);
+				onReceived (buffer, 0, len);
+			}));
+		}
+
+		public void StartListening (int applicationPort, Action<AlsaSequencerEventType> onReceived, int timeout = default_input_timeout)
+		{
+			event_loop_task = Task.Run (() => EventLoop (applicationPort, timeout, () => {
+				var evt = new AlsaSequencerEvent ();
+				Input (evt, applicationPort);
+				onReceived (evt.EventType);
+			}));
 		}
 
 		public void StopListening ()
@@ -339,11 +354,8 @@ namespace AlsaSharp
 			event_loop_stopped = true;
 		}
 
-		unsafe void EventLoop (int port)
+		unsafe void EventLoop (int port, int inputTimeout, Action afterPoll)
 		{
-			if (event_loop_buffer == null)
-				throw new InvalidOperationException ("Call SetInputReceived method before running event loop.");
-			
 			int pollfd_size_dummy = 8;
 			int count = Natives.snd_seq_poll_descriptors_count (seq, POLLIN);
 			void* pollfd_array_ref = stackalloc byte [count * pollfd_size_dummy];
@@ -352,11 +364,9 @@ namespace AlsaSharp
 			if (ret < 0)
 				throw new AlsaException (ret);
 			while (!event_loop_stopped) {
-				int rt = poll (ptr, (uint)count, input_timeout);
-				if (rt > 0) {
-					int len = Receive (port, event_loop_buffer, 0, event_loop_buffer.Length);
-					on_received (event_loop_buffer, 0, len);
-				}
+				int rt = poll (ptr, (uint) count, inputTimeout);
+				if (rt > 0)
+					afterPoll ();
 			}
 		}
 
